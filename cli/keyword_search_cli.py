@@ -2,6 +2,8 @@
 
 import argparse
 import json
+import os
+import pickle
 import string
 from nltk.stem import PorterStemmer
 
@@ -30,6 +32,43 @@ def tokenize(text: str) -> list[str]:
     ]
 
 
+def load_movies() -> list:
+    with open("data/movies.json", "r") as f:
+        data = json.load(f)
+    return data.get("movies", [])
+
+class InvertedIndex:
+    def __init__(self):
+        self.index: dict[str, set[int]] = {}
+        self.docmap: dict[int, dict] = {}
+
+    def __add_document(self, doc_id: int, text: str):
+        tokens = tokenize(text)
+
+        for token in tokens:
+            if token not in self.index:
+                self.index[token] = set()
+            self.index[token].add(doc_id)
+
+    def get_documents(self, term: str) -> list[int]:
+        indexes = self.index.get(term, set())
+        return sorted(indexes)
+    
+    def build(self):
+        movies = load_movies()
+        for movie in movies:
+            doc_id = movie["id"]
+            self.docmap[doc_id] = movie
+            text = f"{movie['title']} {movie['description']}"
+            self.__add_document(doc_id, text)
+
+    def save(self):
+        os.makedirs("cache", exist_ok=True)
+        with open("cache/index.pkl", "wb") as f:
+            pickle.dump(self.index, f)
+        with open("cache/docmap.pkl", "wb") as f:
+            pickle.dump(self.docmap, f)
+
 def matches(query_tokens: list[str], title: str) -> bool:
     title_tokens = tokenize(title)
 
@@ -40,12 +79,22 @@ def matches(query_tokens: list[str], title: str) -> bool:
     )
 
 
+def build_command():
+    idx = InvertedIndex()
+    idx.build()
+    idx.save()
+    docs = idx.get_documents("merida")
+    print(f"First document for token 'merida' = {docs[0]}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Keyword Search CLI")
     subparsers = parser.add_subparsers(
         dest="command",
         help="Available commands"
     )
+
+    subparsers.add_parser("build", help="Build the inverted index")
 
     search_parser = subparsers.add_parser(
         "search",
@@ -60,6 +109,8 @@ def main() -> None:
     args = parser.parse_args()
 
     match args.command:
+        case "build":
+            build_command()
         case "search":
             print(f"Searching for: {preprocess(args.query)}")
 
