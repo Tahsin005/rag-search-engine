@@ -37,23 +37,21 @@ def load_movies() -> list:
         data = json.load(f)
     return data.get("movies", [])
 
+
 class InvertedIndex:
     def __init__(self):
         self.index: dict[str, set[int]] = {}
         self.docmap: dict[int, dict] = {}
 
     def __add_document(self, doc_id: int, text: str):
-        tokens = tokenize(text)
-
-        for token in tokens:
+        for token in tokenize(text):
             if token not in self.index:
                 self.index[token] = set()
             self.index[token].add(doc_id)
 
     def get_documents(self, term: str) -> list[int]:
-        indexes = self.index.get(term, set())
-        return sorted(indexes)
-    
+        return sorted(self.index.get(term, set()))
+
     def build(self):
         movies = load_movies()
         for movie in movies:
@@ -69,42 +67,58 @@ class InvertedIndex:
         with open("cache/docmap.pkl", "wb") as f:
             pickle.dump(self.docmap, f)
 
-def matches(query_tokens: list[str], title: str) -> bool:
-    title_tokens = tokenize(title)
-
-    return any(
-        query_token == title_token
-        for query_token in query_tokens
-        for title_token in title_tokens
-    )
+    def load(self):
+        if not os.path.exists("cache/index.pkl") or not os.path.exists("cache/docmap.pkl"):
+            raise FileNotFoundError("Index files not found. Run 'build' first.")
+        with open("cache/index.pkl", "rb") as f:
+            self.index = pickle.load(f)
+        with open("cache/docmap.pkl", "rb") as f:
+            self.docmap = pickle.load(f)
 
 
 def build_command():
     idx = InvertedIndex()
     idx.build()
     idx.save()
-    docs = idx.get_documents("merida")
-    print(f"First document for token 'merida' = {docs[0]}")
+
+
+def search_command(query: str):
+    idx = InvertedIndex()
+    try:
+        idx.load()
+    except FileNotFoundError as e:
+        print(f"Error: {e}")
+        return
+
+    query_tokens = tokenize(query)
+    print(f"Query Tokens: {query_tokens}")
+
+    results = []
+    seen_ids = set()
+
+    for token in query_tokens:
+        for doc_id in idx.get_documents(token):
+            if doc_id not in seen_ids:
+                seen_ids.add(doc_id)
+                results.append(idx.docmap[doc_id])
+            if len(results) >= 5:
+                break
+        if len(results) >= 5:
+            break
+
+    print(f"Found {len(results)} movies:")
+    for i, movie in enumerate(results):
+        print(f"{i + 1}. {movie['title']} (id: {movie['id']})")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Keyword Search CLI")
-    subparsers = parser.add_subparsers(
-        dest="command",
-        help="Available commands"
-    )
+    subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     subparsers.add_parser("build", help="Build the inverted index")
 
-    search_parser = subparsers.add_parser(
-        "search",
-        help="Search movies using keywords"
-    )
-    search_parser.add_argument(
-        "query",
-        type=str,
-        help="Search query"
-    )
+    search_parser = subparsers.add_parser("search", help="Search movies using keywords")
+    search_parser.add_argument("query", type=str, help="Search query")
 
     args = parser.parse_args()
 
@@ -112,29 +126,7 @@ def main() -> None:
         case "build":
             build_command()
         case "search":
-            print(f"Searching for: {preprocess(args.query)}")
-
-            with open("data/movies.json", "r") as f:
-                data = json.load(f)
-
-            movies = data.get("movies", [])
-            results = []
-
-            query_tokens = tokenize(args.query)
-
-            print(f"Query Tokens: {query_tokens}")
-
-            for movie in movies:
-                title = movie.get("title", "")
-
-                if matches(query_tokens, title):
-                    results.append(movie)
-
-            print(f"Found {len(results)} movies:")
-
-            for index, movie in enumerate(results[:5]):
-                print(f"{index + 1}. {movie['title']}")
-
+            search_command(args.query)
         case _:
             parser.print_help()
 
