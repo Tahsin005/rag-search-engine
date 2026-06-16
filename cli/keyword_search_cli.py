@@ -5,6 +5,7 @@ import json
 import os
 import pickle
 import string
+import math
 from collections import Counter
 from nltk.stem import PorterStemmer
 
@@ -64,6 +65,11 @@ class InvertedIndex:
     
     def get_tf(self, doc_id: int, term: str) -> int:
         return self.term_frequencies.get(doc_id, Counter()).get(term, 0)
+    
+    def get_idf(self, term: str) -> float:
+        total_docs = len(self.docmap)
+        term_doc_count = len(self.index.get(term, set()))
+        return math.log((total_docs + 1) / (term_doc_count + 1))
 
     def build(self):
         movies = load_movies()
@@ -141,6 +147,32 @@ def tf_command(doc_id: int, term: str):
     print(idx.get_tf(doc_id, token))
 
 
+def idf_command(term: str):
+    idx = InvertedIndex()
+    try:
+        idx.load()
+    except FileNotFoundError as e:
+        print(f"Error: {e}")
+        return
+
+    token = tokenize_term(term)
+    idf = idx.get_idf(token)
+    print(f"Inverse document frequency of '{term}': {idf:.2f}")
+
+
+def tfidf_command(doc_id: int, term: str):
+    idx = InvertedIndex()
+    try:
+        idx.load()
+    except FileNotFoundError as e:
+        print(f"Error: {e}")
+        return
+
+    token = tokenize_term(term)
+    tfidf = idx.get_tf(doc_id, token) * idx.get_idf(token)
+    print(f"TF-IDF score of '{term}' in document '{doc_id}': {tfidf:.2f}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Keyword Search CLI")
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
@@ -154,6 +186,13 @@ def main() -> None:
     tf_parser.add_argument("doc_id", type=int, help="Document ID")
     tf_parser.add_argument("term", type=str, help="Term to look up")
 
+    idf_parser = subparsers.add_parser("idf", help="Get inverse document frequency for a term")
+    idf_parser.add_argument("term", type=str, help="Term to look up")
+
+    tfidf_parser = subparsers.add_parser("tfidf", help="Get TF-IDF score for a term in a document")
+    tfidf_parser.add_argument("doc_id", type=int, help="Document ID")
+    tfidf_parser.add_argument("term", type=str, help="Term to look up")
+
     args = parser.parse_args()
 
     match args.command:
@@ -163,6 +202,10 @@ def main() -> None:
             search_command(args.query)
         case "tf":
             tf_command(args.doc_id, args.term)
+        case "idf":
+            idf_command(args.term)
+        case "tfidf":
+            tfidf_command(args.doc_id, args.term)
         case _:
             parser.print_help()
 
