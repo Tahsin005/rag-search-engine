@@ -228,6 +228,41 @@ class ChunkedSemanticSearch(SemanticSearch):
             return self.chunk_embeddings
 
         return self.build_chunk_embeddings(documents)
+    
+    def search_chunks(self, query: str, limit: int = 10) -> list[dict]:
+        query_embedding = self.generate_embedding(query)
+
+        chunk_scores = []
+        for i, chunk_embedding in enumerate(self.chunk_embeddings):
+            score = cosine_similarity(query_embedding, chunk_embedding)
+            metadata = self.chunk_metadata[i]
+            chunk_scores.append({
+                "chunk_idx": metadata["chunk_idx"],
+                "movie_idx": metadata["movie_idx"],
+                "score": score,
+            })
+
+        movie_scores = {}
+        for cs in chunk_scores:
+            movie_idx = cs["movie_idx"]
+            if movie_idx not in movie_scores or cs["score"] > movie_scores[movie_idx]["score"]:
+                movie_scores[movie_idx] = cs
+
+        sorted_movies = sorted(movie_scores.values(), key=lambda x: x["score"], reverse=True)
+        top_movies = sorted_movies[:limit]
+
+        results = []
+        for entry in top_movies:
+            doc = self.documents[entry["movie_idx"]]
+            results.append({
+                "id": doc["id"],
+                "title": doc["title"],
+                "document": doc.get("description", "")[:100],
+                "score": round(float(entry["score"]), 4),
+                "metadata": {"chunk_idx": entry["chunk_idx"]},
+            })
+
+        return results
 
 
 def embed_chunks_command():
@@ -235,3 +270,14 @@ def embed_chunks_command():
     chunked_search = ChunkedSemanticSearch()
     embeddings = chunked_search.load_or_create_chunk_embeddings(documents)
     print(f"Generated {len(embeddings)} chunked embeddings")
+
+
+def search_chunked_command(query: str, limit: int = 5):
+    documents = load_movies()
+    chunked_search = ChunkedSemanticSearch()
+    chunked_search.load_or_create_chunk_embeddings(documents)
+    results = chunked_search.search_chunks(query, limit)
+
+    for i, result in enumerate(results, start=1):
+        print(f"\n{i}. {result['title']} (score: {result['score']:.4f})")
+        print(f"   {result['document']}...")
