@@ -5,6 +5,8 @@ from typing import TypedDict
 import numpy as np
 from sentence_transformers import SentenceTransformer
 
+from .search_utils import load_movies
+
 class ChunkMetadata(TypedDict):
     movie_idx: int
     chunk_idx: int
@@ -86,13 +88,6 @@ def embed_text(text):
     print(f"Text: {text}")
     print(f"First 3 dimensions: {embedding[:3]}")
     print(f"Dimensions: {embedding.shape[0]}")
-
-
-def load_movies():
-    import json
-    with open("data/movies.json", "r") as f:
-        data = json.load(f)
-    return data.get("movies", [])
 
 
 def verify_embeddings():
