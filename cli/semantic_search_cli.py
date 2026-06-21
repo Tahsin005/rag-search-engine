@@ -9,6 +9,8 @@ from lib.semantic_search import (
     SemanticSearch,
     load_movies,
     chunk_command,
+    semantic_chunk_command,
+    embed_chunks_command,
 )
 
 
@@ -47,6 +49,13 @@ def main() -> None:
     chunk_parser.add_argument("--chunk-size", type=int, default=200, help="Number of words per chunk")
     chunk_parser.add_argument("--overlap", type=int, default=0, help="Number of words to overlap between chunks")
 
+    semantic_chunk_parser = subparsers.add_parser("semantic_chunk", help="Chunk text on sentence boundaries")
+    semantic_chunk_parser.add_argument("text", type=str, help="Text to chunk")
+    semantic_chunk_parser.add_argument("--max-chunk-size", type=int, default=4, help="Max sentences per chunk")
+    semantic_chunk_parser.add_argument("--overlap", type=int, default=0, help="Number of sentences to overlap")
+
+    subparsers.add_parser("embed_chunks", help="Build or load chunk embeddings for movie descriptions")
+
     args = parser.parse_args()
 
     match args.command:
@@ -62,6 +71,10 @@ def main() -> None:
             search_command(args.query, args.limit)
         case "chunk":
             chunk_command(args.text, args.chunk_size, args.overlap)
+        case "semantic_chunk":
+            semantic_chunk_command(args.text, args.max_chunk_size, args.overlap)
+        case "embed_chunks":
+            embed_chunks_command()
         case _:
             parser.print_help()
 
