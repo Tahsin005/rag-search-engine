@@ -8,6 +8,7 @@ from lib.semantic_search import (
     embed_query_text,
     SemanticSearch,
     load_movies,
+    chunk_command,
 )
 
 
@@ -19,7 +20,7 @@ def search_command(query, limit):
 
     for i, result in enumerate(results, start=1):
         print(f"{i}. {result['title']} (score: {result['score']:.4f})")
-        print(f"  {result['description'][:1000]}...")
+        print(f"  {result['description'][:100]}...")
         print()
 
 
@@ -41,6 +42,11 @@ def main() -> None:
     search_parser.add_argument("query", type=str, help="Search query")
     search_parser.add_argument("--limit", type=int, default=5, help="Number of results to return")
 
+    chunk_parser = subparsers.add_parser("chunk", help="Chunk text into fixed-size pieces")
+    chunk_parser.add_argument("text", type=str, help="Text to chunk")
+    chunk_parser.add_argument("--chunk-size", type=int, default=200, help="Number of words per chunk")
+    chunk_parser.add_argument("--overlap", type=int, default=0, help="Number of words to overlap between chunks")
+
     args = parser.parse_args()
 
     match args.command:
@@ -54,6 +60,8 @@ def main() -> None:
             embed_query_text(args.query)
         case "search":
             search_command(args.query, args.limit)
+        case "chunk":
+            chunk_command(args.text, args.chunk_size, args.overlap)
         case _:
             parser.print_help()
 
