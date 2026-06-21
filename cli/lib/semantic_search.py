@@ -147,8 +147,15 @@ def chunk_command(text, chunk_size=200, overlap=0):
 
 # semantic chunking
 def semantic_chunk_text(text, max_chunk_size=4, overlap=0):
-    sentences = re.split(r"(?<=[.!?])\s+", text.strip())
-    sentences = [s for s in sentences if s]
+    text = text.strip()
+    if not text:
+        return []
+
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+    sentences = [s.strip() for s in sentences if s.strip()]
+
+    if len(sentences) == 1 and not sentences[0].endswith((".", "!", "?")):
+        sentences = [text]
 
     chunks = []
     step = max_chunk_size - overlap
@@ -158,7 +165,9 @@ def semantic_chunk_text(text, max_chunk_size=4, overlap=0):
     i = 0
     while i < len(sentences):
         chunk = " ".join(sentences[i:i + max_chunk_size])
-        chunks.append(chunk)
+        chunk = chunk.strip()
+        if chunk:
+            chunks.append(chunk)
         if i + max_chunk_size >= len(sentences):
             break
         i += step
