@@ -1,4 +1,6 @@
 import os
+from dotenv import load_dotenv
+from google import genai
 
 from .keyword_search import InvertedIndex
 from .semantic_search import ChunkedSemanticSearch
@@ -155,7 +157,29 @@ def weighted_search_command(query: str, alpha: float = 0.5, limit: int = 5):
         print(f"  {result['document'][:100]}...")
 
 
-def rrf_search_command(query: str, k: int = 60, limit: int = 5):
+def rrf_search_command(query: str, k: int = 60, limit: int = 5, enhance: str = None):
+    original_query = query
+    if enhance == "spell":
+        load_dotenv()
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if not api_key:
+            raise RuntimeError("GEMINI_API_KEY environment variable not set")
+        
+        client = genai.Client(api_key=api_key)
+        prompt = f"""Fix any spelling errors in the user-provided movie search query below.
+Correct only clear, high-confidence typos. Do not rewrite, add, remove, or reorder words.
+Preserve punctuation and capitalization unless a change is required for a typo fix.
+If there are no spelling errors, or if you're unsure, output the original query unchanged.
+Output only the final query text, nothing else.
+User query: "{query}"
+"""
+        response = client.models.generate_content(
+            model="gemma-4-31b-it",
+            contents=prompt
+        )
+        query = response.text.strip()
+        print(f"Enhanced query (spell): '{original_query}' -> '{query}'\n")
+
     documents = load_movies()
     hybrid = HybridSearch(documents)
     results = hybrid.rrf_search(query, k, limit)
