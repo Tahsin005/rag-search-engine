@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
-from lib.hybrid_search import normalize_command, weighted_search_command
+from lib.hybrid_search import normalize_command, weighted_search_command, rrf_search_command
 
 
 def main() -> None:
@@ -16,6 +16,11 @@ def main() -> None:
     weighted_parser.add_argument("--alpha", type=float, default=0.5, help="Weight for BM25 score (0-1)")
     weighted_parser.add_argument("--limit", type=int, default=5, help="Number of results to return")
 
+    rrf_parser = subparsers.add_parser("rrf-search", help="Hybrid search using Reciprocal Rank Fusion")
+    rrf_parser.add_argument("query", type=str, help="Search query")
+    rrf_parser.add_argument("-k", type=int, default=60, help="RRF k constant")
+    rrf_parser.add_argument("--limit", type=int, default=5, help="Number of results to return")
+
     args = parser.parse_args()
 
     match args.command:
@@ -23,6 +28,8 @@ def main() -> None:
             normalize_command(args.scores)
         case "weighted-search":
             weighted_search_command(args.query, args.alpha, args.limit)
+        case "rrf-search":
+            rrf_search_command(args.query, args.k, args.limit)
         case _:
             parser.print_help()
 
