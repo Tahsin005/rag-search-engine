@@ -159,7 +159,7 @@ def weighted_search_command(query: str, alpha: float = 0.5, limit: int = 5):
 
 def rrf_search_command(query: str, k: int = 60, limit: int = 5, enhance: str = None):
     original_query = query
-    if enhance in ["spell", "rewrite"]:
+    if enhance in ["spell", "rewrite", "expand"]:
         load_dotenv()
         api_key = os.environ.get("GEMINI_API_KEY")
         if not api_key:
@@ -175,7 +175,7 @@ If there are no spelling errors, or if you're unsure, output the original query 
 Output only the final query text, nothing else.
 User query: "{query}"
 """
-        else:
+        elif enhance == "rewrite":
             prompt = f"""Rewrite the user-provided movie search query below to be more specific and searchable.
 
 Consider:
@@ -192,6 +192,20 @@ Examples:
 
 If you cannot improve the query, output the original unchanged.
 Output only the rewritten query text, nothing else.
+
+User query: "{query}"
+"""
+        elif enhance == "expand":
+            prompt = f"""Expand the user-provided movie search query below with related terms.
+
+Add synonyms and related concepts that might appear in movie descriptions.
+Keep expansions relevant and focused.
+Output only the additional terms; they will be appended to the original query.
+
+Examples:
+- "scary bear movie" -> "scary horror grizzly bear movie terrifying film"
+- "action movie with bear" -> "action thriller bear chase fight adventure"
+- "comedy with bear" -> "comedy funny bear humor lighthearted"
 
 User query: "{query}"
 """
