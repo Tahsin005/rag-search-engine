@@ -4,6 +4,7 @@ import json
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
+from sentence_transformers import CrossEncoder
 
 from .keyword_search import InvertedIndex
 from .semantic_search import ChunkedSemanticSearch
@@ -223,7 +224,7 @@ User query: "{query}"
     documents = load_movies()
     hybrid = HybridSearch(documents)
     
-    fetch_limit = limit * 5 if rerank_method in ["individual", "batch"] else limit
+    fetch_limit = limit * 5 if rerank_method in ["individual", "batch", "cross_encoder"] else limit
     results = hybrid.rrf_search(query, k, fetch_limit)
 
     if rerank_method == "individual":
@@ -347,6 +348,20 @@ Ranking:"""
             results.sort(key=lambda x: x.get("rerank_rank", float("inf")))
         except Exception as e:
             print(f"Batch reranking failed: {e}")
+    elif rerank_method == "cross_encoder":
+        print(f"Re-ranking top {len(results)} results using {rerank_method} method...")
+        
+        pairs = []
+        for doc in results:
+            pairs.append([query, f"{doc.get('title', '')} - {doc.get('document', '')}"])
+            
+        cross_encoder = CrossEncoder("cross-encoder/ms-marco-TinyBERT-L2-v2")
+        scores = cross_encoder.predict(pairs)
+        
+        for doc, score in zip(results, scores):
+            doc["cross_encoder_score"] = float(score)
+            
+        results.sort(key=lambda x: x.get("cross_encoder_score", float("-inf")), reverse=True)
 
     print(f"Reciprocal Rank Fusion Results for '{original_query}' (k={k}):\n")
 
@@ -358,6 +373,8 @@ Ranking:"""
             print(f"   Re-rank Score: {result['rerank_score']:.3f}/10")
         elif "rerank_rank" in result and result["rerank_rank"] != float("inf"):
             print(f"   Re-rank Rank: {result['rerank_rank']}")
+        elif "cross_encoder_score" in result:
+            print(f"   Cross Encoder Score: {result['cross_encoder_score']:.3f}")
         print(f"   RRF Score: {result['rrf_score']:.3f}")
         print(f"   BM25 Rank: {bm25_rank}, Semantic Rank: {semantic_rank}")
         print(f"   {result['document'][:100]}...")
