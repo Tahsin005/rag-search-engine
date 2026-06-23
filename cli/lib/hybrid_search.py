@@ -1,6 +1,9 @@
 import os
+import time
+import json
 from dotenv import load_dotenv
 from google import genai
+from google.genai import types
 
 from .keyword_search import InvertedIndex
 from .semantic_search import ChunkedSemanticSearch
@@ -157,7 +160,7 @@ def weighted_search_command(query: str, alpha: float = 0.5, limit: int = 5):
         print(f"  {result['document'][:100]}...")
 
 
-def rrf_search_command(query: str, k: int = 60, limit: int = 5, enhance: str = None):
+def rrf_search_command(query: str, k: int = 60, limit: int = 5, enhance: str = None, rerank_method: str = None):
     original_query = query
     if enhance in ["spell", "rewrite", "expand"]:
         load_dotenv()
@@ -219,13 +222,143 @@ User query: "{query}"
 
     documents = load_movies()
     hybrid = HybridSearch(documents)
-    results = hybrid.rrf_search(query, k, limit)
+    
+    fetch_limit = limit * 5 if rerank_method in ["individual", "batch"] else limit
+    results = hybrid.rrf_search(query, k, fetch_limit)
+
+    if rerank_method == "individual":
+        print(f"Re-ranking top {len(results)} results using {rerank_method} method...")
+        
+        load_dotenv()
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if not api_key:
+            raise RuntimeError("GEMINI_API_KEY environment variable not set")
+        
+        client = genai.Client(api_key=api_key)
+        
+        for doc in results:
+            prompt = f"""Rate how well this movie matches the search query.
+
+Query: "{query}"
+Movie: {doc.get("title", "")} - {doc.get("document", "")}
+
+Consider:
+- Direct relevance to query
+- User intent (what they're looking for)
+- Content appropriateness
+
+Rate 0-10 (10 = perfect match).
+Output ONLY the number in your response, no other text or explanation.
+
+Score:"""
+            try:
+                response = client.models.generate_content(
+                    model="gemma-4-31b-it",
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        safety_settings=[
+                            types.SafetySetting(
+                                category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+                                threshold=types.HarmBlockThreshold.BLOCK_NONE,
+                            ),
+                            types.SafetySetting(
+                                category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
+                                threshold=types.HarmBlockThreshold.BLOCK_NONE,
+                            ),
+                            types.SafetySetting(
+                                category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+                                threshold=types.HarmBlockThreshold.BLOCK_NONE,
+                            ),
+                            types.SafetySetting(
+                                category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+                                threshold=types.HarmBlockThreshold.BLOCK_NONE,
+                            ),
+                        ]
+                    )
+                )
+                score_str = response.text.strip()
+                doc["rerank_score"] = float(score_str)
+            except Exception as e:
+                doc["rerank_score"] = 0.0
+            time.sleep(3)
+            
+        results.sort(key=lambda x: x.get("rerank_score", 0.0), reverse=True)
+    elif rerank_method == "batch":
+        print(f"Re-ranking top {len(results)} results using {rerank_method} method...")
+        
+        load_dotenv()
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if not api_key:
+            raise RuntimeError("GEMINI_API_KEY environment variable not set")
+        
+        client = genai.Client(api_key=api_key)
+        
+        doc_list_str = ""
+        for doc in results:
+            doc_list_str += f"ID: {doc['id']}\nTitle: {doc.get('title', '')}\nDescription: {doc.get('document', '')}\n\n"
+            
+        prompt = f"""Rank the movies listed below by relevance to the following search query.
+
+Query: "{query}"
+
+Movies:
+{doc_list_str}
+
+Return the movie IDs in order of relevance, best match first.
+
+Your response must be a raw JSON array of integers.
+Do not wrap the JSON in Markdown. Do not use a ```json code block.
+Do not include any explanatory text.
+
+For example:
+[75, 12, 34, 2, 1]
+
+Ranking:"""
+        try:
+            response = client.models.generate_content(
+                model="gemma-4-31b-it",
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    safety_settings=[
+                        types.SafetySetting(
+                            category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+                            threshold=types.HarmBlockThreshold.BLOCK_NONE,
+                        ),
+                        types.SafetySetting(
+                            category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
+                            threshold=types.HarmBlockThreshold.BLOCK_NONE,
+                        ),
+                        types.SafetySetting(
+                            category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+                            threshold=types.HarmBlockThreshold.BLOCK_NONE,
+                        ),
+                        types.SafetySetting(
+                            category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+                            threshold=types.HarmBlockThreshold.BLOCK_NONE,
+                        ),
+                    ]
+                )
+            )
+            ranked_ids = json.loads(response.text.strip())
+            rank_map = {doc_id: rank for rank, doc_id in enumerate(ranked_ids, start=1)}
+            for doc in results:
+                doc["rerank_rank"] = rank_map.get(doc["id"], float("inf"))
+            
+            results.sort(key=lambda x: x.get("rerank_rank", float("inf")))
+        except Exception as e:
+            print(f"Batch reranking failed: {e}")
+
+    print(f"Reciprocal Rank Fusion Results for '{original_query}' (k={k}):\n")
 
     for i, result in enumerate(results[:limit], start=1):
         bm25_rank = result["bm25_rank"] if result["bm25_rank"] is not None else "-"
         semantic_rank = result["semantic_rank"] if result["semantic_rank"] is not None else "-"
         print(f"{i}. {result['title']}")
-        print(f"  RRF Score: {result['rrf_score']:.3f}")
-        print(f"  BM25 Rank: {bm25_rank}, Semantic Rank: {semantic_rank}")
-        print(f"  {result['document'][:100]}...")
+        if "rerank_score" in result:
+            print(f"   Re-rank Score: {result['rerank_score']:.3f}/10")
+        elif "rerank_rank" in result and result["rerank_rank"] != float("inf"):
+            print(f"   Re-rank Rank: {result['rerank_rank']}")
+        print(f"   RRF Score: {result['rrf_score']:.3f}")
+        print(f"   BM25 Rank: {bm25_rank}, Semantic Rank: {semantic_rank}")
+        print(f"   {result['document'][:100]}...")
         print()
