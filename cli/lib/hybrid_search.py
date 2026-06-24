@@ -1,6 +1,7 @@
 import os
 import time
 import json
+import logging
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
@@ -127,7 +128,7 @@ class HybridSearch:
             })
 
         results.sort(key=lambda r: r["rrf_score"], reverse=True)
-        return results
+        return results[:limit]
         
 
 def normalize_scores(scores: list[float]) -> list[float]:
@@ -161,8 +162,10 @@ def weighted_search_command(query: str, alpha: float = 0.5, limit: int = 5):
         print(f"  {result['document'][:100]}...")
 
 
-def rrf_search_command(query: str, k: int = 60, limit: int = 5, enhance: str = None, rerank_method: str = None):
+def rrf_search_command(query: str, k: int = 60, limit: int = 5, enhance: str = None, rerank_method: str = None, debug: bool = False, evaluate: bool = False):
+    logger = logging.getLogger(__name__)
     original_query = query
+    logger.debug("[1/4] Original query: '%s'", original_query)
     if enhance in ["spell", "rewrite", "expand"]:
         load_dotenv()
         api_key = os.environ.get("GEMINI_API_KEY")
@@ -219,6 +222,7 @@ User query: "{query}"
             contents=prompt
         )
         query = response.text.strip()
+        logger.debug("[2/4] Query after '%s' enhancement: '%s'", enhance, query)
         print(f"Enhanced query ({enhance}): '{original_query}' -> '{query}'\n")
 
     documents = load_movies()
@@ -226,6 +230,11 @@ User query: "{query}"
     
     fetch_limit = limit * 5 if rerank_method in ["individual", "batch", "cross_encoder"] else limit
     results = hybrid.rrf_search(query, k, fetch_limit)
+    logger.debug(
+        "[3/4] RRF search returned %d results: %s",
+        len(results),
+        [r["title"] for r in results],
+    )
 
     if rerank_method == "individual":
         print(f"Re-ranking top {len(results)} results using {rerank_method} method...")
@@ -363,6 +372,12 @@ Ranking:"""
             
         results.sort(key=lambda x: x.get("cross_encoder_score", float("-inf")), reverse=True)
 
+    logger.debug(
+        "[4/4] Final results after re-ranking (top %d): %s",
+        limit,
+        [r["title"] for r in results[:limit]],
+    )
+
     print(f"Reciprocal Rank Fusion Results for '{original_query}' (k={k}):\n")
 
     for i, result in enumerate(results[:limit], start=1):
@@ -379,3 +394,71 @@ Ranking:"""
         print(f"   BM25 Rank: {bm25_rank}, Semantic Rank: {semantic_rank}")
         print(f"   {result['document'][:100]}...")
         print()
+
+    if evaluate:
+        print("Evaluating results...")
+        load_dotenv()
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if not api_key:
+            raise RuntimeError("GEMINI_API_KEY environment variable not set")
+        
+        client = genai.Client(api_key=api_key)
+        
+        formatted_results = []
+        for doc in results[:limit]:
+            formatted_results.append(f"{doc.get('title', '')} - {doc.get('document', '')}")
+            
+        prompt = f"""Rate how relevant each result is to this query on a 0-3 scale:
+
+Query: "{query}"
+
+Results:
+{chr(10).join(formatted_results)}
+
+Scale:
+- 3: Highly relevant
+- 2: Relevant
+- 1: Marginally relevant
+- 0: Not relevant
+
+Do NOT give any numbers other than 0, 1, 2, or 3.
+
+Return ONLY the scores in the same order you were given the documents. Return a valid JSON list, nothing else. For example:
+
+[2, 0, 3, 2, 0, 1]"""
+
+        try:
+            response = client.models.generate_content(
+                model="gemma-4-31b-it",
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    safety_settings=[
+                        types.SafetySetting(category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold=types.HarmBlockThreshold.BLOCK_NONE),
+                        types.SafetySetting(category=types.HarmCategory.HARM_CATEGORY_HARASSMENT, threshold=types.HarmBlockThreshold.BLOCK_NONE),
+                        types.SafetySetting(category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold=types.HarmBlockThreshold.BLOCK_NONE),
+                        types.SafetySetting(category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold=types.HarmBlockThreshold.BLOCK_NONE),
+                    ]
+                )
+            )
+            
+            if not response.text:
+                print("Evaluation failed: The model returned an empty response (likely blocked by safety filters).")
+                if response.candidates and response.candidates[0].finish_reason:
+                    print(f"Finish reason: {response.candidates[0].finish_reason}")
+                return
+                
+            text = response.text.strip()
+            if text.startswith("```json"):
+                text = text[7:]
+            elif text.startswith("```"):
+                text = text[3:]
+            if text.endswith("```"):
+                text = text[:-3]
+            text = text.strip()
+            
+            scores = json.loads(text)
+            
+            for i, (doc, score) in enumerate(zip(results[:limit], scores), start=1):
+                print(f"{i}. {doc['title']}: {score}/3")
+        except Exception as e:
+            print(f"Evaluation failed: {e}")
